@@ -274,6 +274,14 @@
 
       <div class="section-label">Display</div>
       <div class="ctl">
+        <span class="lbl">Distance unit</span>
+        <div class="seg" id="unitSeg" role="group" aria-label="Distance unit">
+          <button data-unit="km" aria-pressed="true">Kilometer</button>
+          <button data-unit="mi" aria-pressed="false">Miles</button>
+          <button data-unit="nm" aria-pressed="false">Nautic Miles</button>
+        </div>
+      </div>
+      <div class="ctl">
         <span class="lbl">Basemap</span>
         <div class="seg" id="basemapSeg" role="group" aria-label="Basemap">
           <button data-base="sat" aria-pressed="true">Satellite</button>
@@ -346,6 +354,13 @@
     terr: { url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
             attr:'© Esri — World Topographic Map', max:19 }
   };
+  
+  // Distance units: { label, abbreviation, converter: function(meters) -> value, decimals }
+  var UNITS = {
+    km: { label:'Kilometer', abbr:'km', convert:function(m){ return m/1000; }, decimals:function(v){ if(v<10)return 2; if(v<100)return 1; return 0; } },
+    mi: { label:'Miles', abbr:'mi', convert:function(m){ return m/1609.34; }, decimals:function(v){ if(v<10)return 2; if(v<100)return 1; return 0; } },
+    nm: { label:'Nautic Miles', abbr:'nm', convert:function(m){ return m/1852; }, decimals:function(v){ if(v<10)return 2; if(v<100)return 1; return 0; } }
+  };
 
   var state = {
     tracks: [],          // {id,name,color,visible,segments,points,distance,bounds,group}
@@ -353,7 +368,8 @@
     colorMode: 'perfile',
     uniformColor: '#ff6a1a',
     basemap: 'sat',
-    weight: 3
+    weight: 3,
+    distanceUnit: 'km'
   };
 
   // ---------- map ----------
@@ -380,11 +396,14 @@
     var h=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.sin(dLon/2)*Math.sin(dLon/2)*Math.cos(la1)*Math.cos(la2);
     return 2*R*Math.asin(Math.min(1,Math.sqrt(h)));
   }
-  function fmtKm(m){
-    var km = m/1000;
-    if(km < 10) return km.toFixed(2);
-    if(km < 100) return km.toFixed(1);
-    return Math.round(km).toString();
+  function fmtDist(m){
+    var unit = UNITS[state.distanceUnit];
+    var val = unit.convert(m);
+    var decimals = unit.decimals(val);
+    return val.toFixed(decimals);
+  }
+  function fmtDistWithUnit(m){
+    return fmtDist(m) + ' <span class="u">' + UNITS[state.distanceUnit].abbr + '</span>';
   }
 
   var toastTimer;
@@ -470,7 +489,7 @@
   function refreshTotals(){
     var d=0, any=false;
     state.tracks.forEach(function(t){ if(t.visible){ d+=t.distance; any=true; } });
-    $('hudDist').innerHTML = fmtKm(d) + ' <span class="u">km</span>';
+    $('hudDist').innerHTML = fmtDist(d) + ' <span class="u">' + UNITS[state.distanceUnit].abbr + '</span>';
     var has = state.tracks.length>0;
     $('fitBtn').disabled = !any;
     $('exportBtn').disabled = !has;
@@ -492,7 +511,7 @@
       var meta=document.createElement('div'); meta.className='meta';
       var fn=document.createElement('div'); fn.className='fname'; fn.textContent=t.name; fn.title=t.name;
       var st=document.createElement('div'); st.className='fstat';
-      st.textContent = fmtKm(t.distance)+' km · '+t.points.toLocaleString()+' pts';
+      st.textContent = fmtDist(t.distance)+' '+UNITS[state.distanceUnit].abbr+' · '+t.points.toLocaleString()+' pts';
       meta.appendChild(fn); meta.appendChild(st);
       var del=document.createElement('button'); del.className='del'; del.setAttribute('aria-label','Remove '+t.name);
       del.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -688,8 +707,28 @@
   // collapse on mobile
   $('togglePanel').onclick=function(){ $('console').classList.toggle('collapsed'); };
 
+  // distance unit toggle
+  $('unitSeg').addEventListener('click', function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    Array.prototype.forEach.call(this.children, function(c){ c.setAttribute('aria-pressed', c===b ? 'true':'false'); });
+    state.distanceUnit=b.dataset.unit;
+    refreshTotals();
+    renderList();
+  });
+
   // HUD live readouts
-  function fmtDeg(v, lat){ var h = lat ? (v>=0?'N':'S') : (v>=0?'E':'W'); return Math.abs(v).toFixed(5)+'° '+h; }
+  function fmtDeg(v, lat){ 
+    var h = lat ? (v>=0?'N':'S') : (v>=0?'E':'W');
+    var absv = Math.abs(v);
+    var pad = lat ? 2 : 3; // latitude: 0-90, longitude: 0-180
+    var deg = Math.floor(absv);
+    var degStr = (''+deg).padStart(pad, '0');
+    var min = (absv - deg) * 60;
+    var minStr = (''+Math.floor(min)).padStart(2, '0');
+    var sec = (min - Math.floor(min)) * 60;
+    var secStr = sec.toFixed(2).padStart(5, '0');
+    return degStr + '° ' + minStr + "' " + secStr + '" ' + h;
+  }
   map.on('mousemove', function(e){ $('hudLat').textContent=fmtDeg(e.latlng.lat,true); $('hudLon').textContent=fmtDeg(e.latlng.lng,false); });
   map.on('zoomend', function(){ $('hudZoom').textContent=Math.round(map.getZoom()); });
   map.on('mouseout', function(){ $('hudLat').textContent='—'; $('hudLon').textContent='—'; });
