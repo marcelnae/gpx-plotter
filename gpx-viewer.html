@@ -150,6 +150,16 @@
   input[type=range]::-moz-range-thumb{ width:15px; height:15px; border-radius:50%; background:var(--blaze); border:2px solid #1a1006; cursor:pointer; }
   .wval{ font:600 11px/1 var(--mono); color:var(--muted); min-width:26px; text-align:right; }
 
+  .mmrow{ display:flex; align-items:center; gap:8px; }
+  .mm-input{
+    width:58px; background:var(--raised); border:1px solid var(--hair); border-radius:7px;
+    color:var(--text); font:600 12px/1 var(--mono); padding:8px 6px; text-align:center;
+  }
+  .mm-input:focus{ outline:none; border-color:var(--blaze-dim); }
+  .mmrow .x{ color:var(--faint); font:600 12px var(--mono); }
+  .mmrow .unit{ color:var(--muted); font:500 10.5px var(--mono); }
+  .hint{ font:500 10.5px/1.4 var(--mono); color:var(--faint); margin-top:6px; }
+
   /* footer actions */
   .actions{
     padding:12px 15px; border-top:1px solid var(--hair-soft);
@@ -309,16 +319,32 @@
           <span class="wval" id="weightVal">3px</span>
         </div>
       </div>
+
+      <div class="section-label">Meilenbuch PDF</div>
+      <div class="ctl">
+        <span class="lbl">Max image size</span>
+        <div class="mmrow">
+          <input type="number" class="mm-input" id="pdfWidth" value="80" min="20" max="250" step="1" aria-label="Max width in millimeters" />
+          <span class="unit">mm</span>
+          <span class="x">×</span>
+          <input type="number" class="mm-input" id="pdfHeight" value="60" min="20" max="250" step="1" aria-label="Max height in millimeters" />
+          <span class="unit">mm</span>
+        </div>
+        <div class="hint">Route cropped tight, scaled to fit this box — print at 100% and glue in.</div>
+      </div>
     </div>
 
     <div class="actions">
-      <button class="btn" id="fitBtn" disabled>
+      <button class="btn" id="fitBtn" disabled title="Fit all">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        Fit all
       </button>
-      <button class="btn primary" id="exportBtn" disabled>
+      <button class="btn primary" id="exportBtn" disabled title="Export PNG">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 3v11m0 0l-4-4m4 4l4-4M5 21h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Export PNG
+        PNG
+      </button>
+      <button class="btn primary" id="exportPdfBtn" disabled title="Export Meilenbuch PDF">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 3v11m0 0l-4-4m4 4l4-4M5 21h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        PDF
       </button>
     </div>
   </aside>
@@ -342,6 +368,7 @@
   <div class="toast" id="toast"><span class="dot"></span><span id="toastMsg"></span></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 (function(){
   "use strict";
@@ -450,7 +477,21 @@
       var seg=segments[i];
       for(var j=0;j<seg.length;j++){ b.extend(seg[j]); count++; if(j>0) dist+=haversine(seg[j-1],seg[j]); }
     }
-    return { segments:segments, points:count, distance:dist, bounds:b };
+
+    // best-effort start/end time, for the Meilenbuch caption
+    var startTime=null, endTime=null;
+    var trkpts = doc.getElementsByTagName('trkpt');
+    if(trkpts.length){
+      startTime = readTime(trkpts[0]);
+      endTime = readTime(trkpts[trkpts.length-1]);
+    }
+    return { segments:segments, points:count, distance:dist, bounds:b, startTime:startTime, endTime:endTime };
+  }
+  function readTime(node){
+    var els = node.getElementsByTagName('time');
+    if(!els.length) return null;
+    var d = new Date(els[0].textContent.trim());
+    return isNaN(d.getTime()) ? null : d;
   }
 
   // ---------- rendering on the live map ----------
@@ -493,6 +534,7 @@
     var has = state.tracks.length>0;
     $('fitBtn').disabled = !any;
     $('exportBtn').disabled = !has;
+    $('exportPdfBtn').disabled = !any;
     $('count').textContent = state.tracks.length;
   }
   function renderList(){
@@ -544,7 +586,8 @@
           var data=parseGPX(reader.result);
           var t={ id:++state.seq, name:f.name.replace(/\.gpx$/i,''),
                   color:PALETTE[state.seq % PALETTE.length], visible:true,
-                  segments:data.segments, points:data.points, distance:data.distance, bounds:data.bounds, group:null };
+                  segments:data.segments, points:data.points, distance:data.distance, bounds:data.bounds,
+                  startTime:data.startTime, endTime:data.endTime, group:null };
           state.tracks.push(t); buildLayer(t); loaded++;
         }catch(err){ failed++; }
         if(--pending===0) done();
@@ -561,7 +604,7 @@
     }
   }
 
-  // ---------- PNG export (custom canvas, CORS-safe, WYSIWYG) ----------
+  // ---------- shared canvas rendering (used by PNG + PDF export) ----------
   function loadTile(url){
     return new Promise(function(res){
       var img=new Image(); img.crossOrigin='anonymous';
@@ -570,23 +613,9 @@
       img.src=url;
     });
   }
-  function exportPNG(){
-    var btn=$('exportBtn'); var label=btn.innerHTML;
-    btn.disabled=true; btn.innerHTML='Rendering…';
-
-    var z=Math.round(map.getZoom());
-    var size=map.getSize();                 // css px
-    var pb=map.getPixelBounds();            // world px @ current zoom
-    var min=pb.min;
-    var W=size.x, H=size.y, TS=256;
-    var maxTile=Math.pow(2,z);
-    var tmpl=TILES[state.basemap].url;
-
-    var canvas=document.createElement('canvas');
-    canvas.width=W; canvas.height=H;
-    var ctx=canvas.getContext('2d');
-    ctx.fillStyle='#0c1116'; ctx.fillRect(0,0,W,H);
-
+  // draws basemap tiles covering [min, min+W/H) at zoom z into ctx, at ctx-local (0,0)
+  function drawTiles(ctx, z, min, W, H, tmpl){
+    var maxTile=Math.pow(2,z), TS=256;
     var x0=Math.floor(min.x/TS), x1=Math.floor((min.x+W)/TS);
     var y0=Math.floor(min.y/TS), y1=Math.floor((min.y+H)/TS);
     var jobs=[];
@@ -602,39 +631,71 @@
         })(tx*TS, ty*TS);
       }
     }
-
-    Promise.all(jobs).then(function(){
-      // draw tracks using Leaflet's own projection so it matches the screen exactly
-      state.tracks.forEach(function(t){
-        if(!t.visible) return;
-        var col=colorOf(t);
-        ctx.lineJoin='round'; ctx.lineCap='round';
-        ctx.strokeStyle=col; ctx.lineWidth=state.weight;
-        t.segments.forEach(function(seg){
-          if(seg.length<2) return;
-          ctx.beginPath();
-          for(var i=0;i<seg.length;i++){
-            var p=map.project(seg[i], z);
-            var x=p.x-min.x, y=p.y-min.y;
-            if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-          }
-          ctx.stroke();
-        });
-        // start / end markers
-        var first=t.segments[0][0];
-        var lastSeg=t.segments[t.segments.length-1];
-        var last=lastSeg[lastSeg.length-1];
-        marker(ctx, map.project(first,z), min, col, true);
-        marker(ctx, map.project(last,z), min, col, false);
+    return Promise.all(jobs);
+  }
+  function marker(ctx, p, min, col, isStart, scale){
+    scale = scale || 1;
+    var x=p.x-min.x, y=p.y-min.y;
+    ctx.beginPath(); ctx.arc(x,y,5*scale,0,Math.PI*2);
+    if(isStart){ ctx.fillStyle=col; ctx.fill(); ctx.lineWidth=2*scale; ctx.strokeStyle='#fff'; ctx.stroke(); }
+    else{ ctx.fillStyle='#0c1116'; ctx.fill(); ctx.lineWidth=3*scale; ctx.strokeStyle=col; ctx.stroke(); }
+  }
+  // draws all visible tracks (relative to min, at zoom z) into ctx; lineScale compensates
+  // for rendering at a resolution that will later be scaled down, so on-screen weight is preserved
+  function drawTracksToCtx(ctx, z, min, lineScale){
+    lineScale = lineScale || 1;
+    state.tracks.forEach(function(t){
+      if(!t.visible) return;
+      var col=colorOf(t);
+      ctx.lineJoin='round'; ctx.lineCap='round';
+      ctx.strokeStyle=col; ctx.lineWidth=state.weight*lineScale;
+      t.segments.forEach(function(seg){
+        if(seg.length<2) return;
+        ctx.beginPath();
+        for(var i=0;i<seg.length;i++){
+          var p=map.project(seg[i], z);
+          var x=p.x-min.x, y=p.y-min.y;
+          if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+        }
+        ctx.stroke();
       });
+      var first=t.segments[0][0];
+      var lastSeg=t.segments[t.segments.length-1];
+      var last=lastSeg[lastSeg.length-1];
+      marker(ctx, map.project(first,z), min, col, true, lineScale);
+      marker(ctx, map.project(last,z), min, col, false, lineScale);
+    });
+  }
 
-      // burn-in imagery credit (legally required for the tiles)
-      var credit=TILES[state.basemap].attr;
-      ctx.font='11px ui-monospace, Menlo, Consolas, monospace';
-      var tw=ctx.measureText(credit).width;
-      ctx.fillStyle='rgba(8,12,16,.66)'; ctx.fillRect(W-tw-16, H-24, tw+16, 24);
-      ctx.fillStyle='rgba(220,228,235,.85)'; ctx.textBaseline='middle';
-      ctx.fillText(credit, W-tw-8, H-11);
+  function burnCredit(ctx, W, H){
+    var credit=TILES[state.basemap].attr;
+    ctx.font='11px ui-monospace, Menlo, Consolas, monospace';
+    var tw=ctx.measureText(credit).width;
+    ctx.fillStyle='rgba(8,12,16,.66)'; ctx.fillRect(W-tw-16, H-24, tw+16, 24);
+    ctx.fillStyle='rgba(220,228,235,.85)'; ctx.textBaseline='middle';
+    ctx.fillText(credit, W-tw-8, H-11);
+  }
+
+  function exportPNG(){
+    var btn=$('exportBtn'); var label=btn.innerHTML;
+    btn.disabled=true; btn.innerHTML='…';
+
+    var z=Math.round(map.getZoom());
+    var size=map.getSize();                 // css px
+    var pb=map.getPixelBounds();            // world px @ current zoom
+    var min=pb.min;
+    var W=size.x, H=size.y;
+    var tmpl=TILES[state.basemap].url;
+
+    var canvas=document.createElement('canvas');
+    canvas.width=W; canvas.height=H;
+    var ctx=canvas.getContext('2d');
+    ctx.fillStyle='#0c1116'; ctx.fillRect(0,0,W,H);
+
+    drawTiles(ctx, z, min, W, H, tmpl).then(function(){
+      // draw tracks using Leaflet's own projection so it matches the screen exactly
+      drawTracksToCtx(ctx, z, min, 1);
+      burnCredit(ctx, W, H); // legally required credit for the imagery
 
       canvas.toBlob(function(blob){
         btn.disabled=false; btn.innerHTML=label;
@@ -651,11 +712,108 @@
       toast('Export failed while loading imagery.', true);
     });
   }
-  function marker(ctx, p, min, col, isStart){
-    var x=p.x-min.x, y=p.y-min.y;
-    ctx.beginPath(); ctx.arc(x,y,5,0,Math.PI*2);
-    if(isStart){ ctx.fillStyle=col; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle='#fff'; ctx.stroke(); }
-    else{ ctx.fillStyle='#0c1116'; ctx.fill(); ctx.lineWidth=3; ctx.strokeStyle=col; ctx.stroke(); }
+
+  // ---------- Meilenbuch PDF export: route cropped tight, scaled to a fixed print size ----------
+  var PDF_DPI = 300;
+  function mm2px(mm){ return Math.round(mm/25.4*PDF_DPI); }
+  function px2mm(px){ return px/PDF_DPI*25.4; }
+
+  function fmtDate(d){
+    return d.toLocaleDateString('de-DE', { day:'2-digit', month:'2-digit', year:'numeric' });
+  }
+  function captionLine(tracks, dist){
+    var starts = tracks.map(function(t){ return t.startTime; }).filter(Boolean);
+    var ends = tracks.map(function(t){ return t.endTime; }).filter(Boolean);
+    var dateStr = '';
+    if(starts.length && ends.length){
+      var minD = new Date(Math.min.apply(null, starts));
+      var maxD = new Date(Math.max.apply(null, ends));
+      dateStr = (minD.toDateString()===maxD.toDateString()) ? fmtDate(minD) : (fmtDate(minD)+' – '+fmtDate(maxD));
+    }
+    var distStr = fmtDist(dist)+' '+UNITS[state.distanceUnit].abbr;
+    return [dateStr, distStr].filter(Boolean).join('   ·   ');
+  }
+
+  function exportPDF(){
+    var visible = state.tracks.filter(function(t){ return t.visible; });
+    if(!visible.length){ toast('No visible tracks to export.', true); return; }
+    var bounds = combinedBounds();
+    if(!bounds.isValid()){ toast('No visible tracks to export.', true); return; }
+    if(typeof window.jspdf === 'undefined'){ toast('PDF library failed to load.', true); return; }
+
+    var btn=$('exportPdfBtn'); var label=btn.innerHTML;
+    btn.disabled=true; btn.innerHTML='…';
+
+    var maxWmm = Math.max(20, parseFloat($('pdfWidth').value) || 80);
+    var maxHmm = Math.max(20, parseFloat($('pdfHeight').value) || 60);
+    var maxWpx = mm2px(maxWmm), maxHpx = mm2px(maxHmm);
+
+    var sw=bounds.getSouthWest(), ne=bounds.getNorthEast();
+    if(sw.lat===ne.lat && sw.lng===ne.lng){ // degenerate (single point) bounds — give it a footprint
+      bounds = L.latLngBounds([sw.lat-0.005, sw.lng-0.005],[ne.lat+0.005, ne.lng+0.005]);
+    }
+    var padded = bounds.pad(0.10);
+
+    // bounds aspect ratio at zoom 0, to size the output box without distorting or cropping the route
+    var nw0=map.project(padded.getNorthWest(),0), se0=map.project(padded.getSouthEast(),0);
+    var bw0=se0.x-nw0.x, bh0=se0.y-nw0.y;
+    var boundsAR = (bw0>0 && bh0>0) ? bw0/bh0 : 1;
+    var boxAR = maxWpx/maxHpx;
+    var outW, outH;
+    if(boundsAR > boxAR){ outW=maxWpx; outH=Math.round(maxWpx/boundsAR); }
+    else{ outH=maxHpx; outW=Math.round(maxHpx*boundsAR); }
+    outW=Math.max(1,outW); outH=Math.max(1,outH);
+
+    // pick the lowest integer tile zoom that gives at least outW x outH source pixels (avoids upscale blur)
+    var maxZoom = TILES[state.basemap].max;
+    var z, nw, se, srcW, srcH;
+    for(z=0; z<=maxZoom; z++){
+      nw=map.project(padded.getNorthWest(), z); se=map.project(padded.getSouthEast(), z);
+      srcW=se.x-nw.x; srcH=se.y-nw.y;
+      if(srcW>=outW && srcH>=outH) break;
+    }
+    if(z>maxZoom) z=maxZoom; // last iteration (at maxZoom) already computed nw/se/srcW/srcH above
+    var min=nw;
+    var k = Math.min(outW/srcW, outH/srcH);      // downscale factor applied at the end
+    var lineScale = k>0 ? 1/k : 1;
+
+    var srcCanvas=document.createElement('canvas');
+    srcCanvas.width=Math.round(srcW); srcCanvas.height=Math.round(srcH);
+    var sctx=srcCanvas.getContext('2d');
+    sctx.fillStyle='#0c1116'; sctx.fillRect(0,0,srcCanvas.width,srcCanvas.height);
+
+    drawTiles(sctx, z, min, srcCanvas.width, srcCanvas.height, TILES[state.basemap].url).then(function(){
+      drawTracksToCtx(sctx, z, min, lineScale);
+      burnCredit(sctx, srcCanvas.width, srcCanvas.height);
+
+      var outCanvas=document.createElement('canvas');
+      outCanvas.width=outW; outCanvas.height=outH;
+      var octx=outCanvas.getContext('2d');
+      octx.imageSmoothingEnabled=true; octx.imageSmoothingQuality='high';
+      octx.drawImage(srcCanvas, 0,0,srcCanvas.width,srcCanvas.height, 0,0,outW,outH);
+
+      var imgData = outCanvas.toDataURL('image/jpeg', 0.92);
+      var outWmm = px2mm(outW), outHmm = px2mm(outH);
+      var margin = 6, captionH = 8;
+      var pageWmm = outWmm + margin*2;
+      var pageHmm = outHmm + margin*2 + captionH;
+
+      var jsPDF = window.jspdf.jsPDF;
+      var doc = new jsPDF({ unit:'mm', format:[pageWmm, pageHmm] });
+      var dist = visible.reduce(function(s,t){ return s+t.distance; }, 0);
+      doc.setProperties({ title: 'Meilenbuch' });
+      doc.addImage(imgData, 'JPEG', margin, margin, outWmm, outHmm);
+
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(40,40,40);
+      doc.text(captionLine(visible, dist), margin, margin+outHmm+5.5, { maxWidth: outWmm });
+
+      doc.save('meilenbuch-'+new Date().toISOString().slice(0,10)+'.pdf');
+      btn.disabled=false; btn.innerHTML=label;
+      toast('PDF exported · '+outWmm.toFixed(0)+'×'+outHmm.toFixed(0)+' mm');
+    }).catch(function(){
+      btn.disabled=false; btn.innerHTML=label;
+      toast('Export failed while loading imagery.', true);
+    });
   }
 
   // ---------- events ----------
@@ -703,6 +861,7 @@
   // actions
   $('fitBtn').onclick=function(){ var b=combinedBounds(); if(b.isValid()) map.fitBounds(b.pad(0.12)); };
   $('exportBtn').onclick=exportPNG;
+  $('exportPdfBtn').onclick=exportPDF;
 
   // collapse on mobile
   $('togglePanel').onclick=function(){ $('console').classList.toggle('collapsed'); };
