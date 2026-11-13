@@ -25,3 +25,9 @@ export const FIT_PAD = 0.12;
 
 // Resolution of the Meilenbuch PDF image
 export const PDF_DPI = 300;
+
+// Limits for untrusted GPX input and export rendering (protect the tab from hanging)
+export const MAX_FILE_BYTES = 50 * 1024 * 1024;  // per .gpx file
+export const MAX_POINTS = 2_000_000;             // per .gpx file
+export const MAX_EXPORT_PIXELS = 64_000_000;     // source canvas area for exports
+export const MAX_EXPORT_TILES = 2000;            // tiles fetched per export

@@ -49,7 +49,7 @@ js/
 - **State:** `state.js` exports a single `state` object. Code changes it directly and then calls the matching re-render:
   - `rebuildAll()` (map.js) when anything that affects how tracks look changes (color, weight).
   - `renderList()` (ui/tracklist.js) when anything shown in the panel or HUD changes. It also updates the totals and enables or disables the buttons.
-- **Libraries:** Leaflet and jsPDF load as classic `<script>` tags from cdnjs, before the app module. They provide the globals `L` and `window.jspdf`. Update the pinned versions in `index.html` deliberately.
+- **Libraries:** Leaflet and jsPDF load as classic `<script>` tags from cdnjs, before the app module. They provide the globals `L` and `window.jspdf`. Each tag carries an SRI `integrity` hash, so a changed file on the CDN is refused. Update versions deliberately (see [Updating a CDN library](#updating-a-cdn-library)).
 - **Exports:** Both exports redraw the map onto a `<canvas>` instead of taking a screenshot. They fetch tiles at a chosen zoom and project the track points with `map.project()`, so the result matches the screen exactly. For the PDF, tiles are rendered at the lowest zoom that gives enough pixels for 300 DPI. The image is then scaled down, and `lineScale` keeps the line weight visually consistent.
 - **Dependency direction:** `config`/`state`/`format`/`gpx` → `map` → `export/*` and `ui/*` → `main`. Keep `gpx.js` and `format.js` free of map and DOM access so they stay easy to test.
 
@@ -64,6 +64,27 @@ js/
 2. Add a `<button data-unit="yourKey">` to `#unitSeg` in `index.html`.
 
 **Change the look:** colors, fonts and radii are CSS custom properties at the top of `css/base.css`.
+
+### Updating a CDN library
+
+1. Change the version in the `src`/`href` in `index.html`.
+2. Replace the `integrity` value with the new file's hash. Copy it from the file's page on cdnjs.com, or compute it:
+   ```sh
+   echo "sha512-$(curl -sL <url> | openssl dgst -sha512 -binary | base64 -w0)"
+   ```
+3. Reload and check the console. A wrong hash blocks the library and the map stays blank.
+
+## Security
+
+GPX files are untrusted input, even though they are only processed locally in the viewer's own browser. The rules:
+
+- **Never render file content as HTML.** Track names come from the filename and are written with `textContent`. If you ever display GPX metadata (`<name>`, `<desc>`, …), keep using `textContent`. Leaflet's `bindPopup(string)` / `bindTooltip(string)` insert HTML, so pass them a DOM node instead of a string.
+- **Input limits** (`js/config.js`): files over `MAX_FILE_BYTES` (50 MB) are skipped before reading, and parsing stops at `MAX_POINTS` (2 million) per file. Points outside lat ±90 / lon ±180 are dropped in `gpx.js`. Without that, a single bogus coordinate makes the bounds huge and the export tries to render a gigantic canvas.
+- **Export limits:** the PDF export refuses source canvases larger than `MAX_EXPORT_PIXELS`, and `drawTiles` refuses to fetch more than `MAX_EXPORT_TILES` tiles.
+- **XML parsing** uses the browser's `DOMParser`, which never loads external entities (no XXE) and limits entity expansion.
+- **Third-party code** is pinned by version and SRI hash (see above).
+
+**Privacy:** GPX files often reveal home or work locations. Nothing is uploaded, and the PNG/PDF exports contain no GPS metadata. The only outbound requests are the map tiles fetched from Esri, which reveal the area being viewed.
 
 ## Deployment
 

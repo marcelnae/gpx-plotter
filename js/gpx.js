@@ -1,4 +1,5 @@
 // GPX parsing and geo math. No DOM (apart from DOMParser) and no map access.
+import { MAX_POINTS } from './config.js';
 
 // Great-circle distance in meters between [lat, lon] pairs
 export function haversine(a, b){
@@ -15,11 +16,20 @@ export function endpoints(segments){
   return [segments[0][0], lastSeg[lastSeg.length - 1]];
 }
 
-function readPoints(nodes){
+// Valid WGS84 coordinates only. Out-of-range values would otherwise produce
+// absurd bounds (Leaflet doesn't clamp longitude) and blow up the exports.
+function validCoord(lat, lon){
+  return isFinite(lat) && isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+}
+
+// budget: { left } — shared across all reads of one file, enforces MAX_POINTS
+function readPoints(nodes, budget){
   const pts = [];
   for(const n of nodes){
     const lat = parseFloat(n.getAttribute('lat')), lon = parseFloat(n.getAttribute('lon'));
-    if(isFinite(lat) && isFinite(lon)) pts.push([lat, lon]);
+    if(!validCoord(lat, lon)) continue;
+    if(--budget.left < 0) throw new Error('too many points');
+    pts.push([lat, lon]);
   }
   return pts;
 }
@@ -38,19 +48,20 @@ export function parseGPX(text){
   if(doc.getElementsByTagName('parsererror').length) throw new Error('not valid XML');
 
   const segments = [];
+  const budget = { left: MAX_POINTS };
   // track segments
   for(const seg of doc.getElementsByTagName('trkseg')){
-    const p = readPoints(seg.getElementsByTagName('trkpt'));
+    const p = readPoints(seg.getElementsByTagName('trkpt'), budget);
     if(p.length) segments.push(p);
   }
   // routes
   for(const rte of doc.getElementsByTagName('rte')){
-    const p = readPoints(rte.getElementsByTagName('rtept'));
+    const p = readPoints(rte.getElementsByTagName('rtept'), budget);
     if(p.length) segments.push(p);
   }
   // waypoints only (no tracks/routes) -> one segment so they still render
   if(!segments.length){
-    const wpts = readPoints(doc.getElementsByTagName('wpt'));
+    const wpts = readPoints(doc.getElementsByTagName('wpt'), budget);
     if(wpts.length) segments.push(wpts);
   }
   if(!segments.length) throw new Error('no track, route or waypoint data');

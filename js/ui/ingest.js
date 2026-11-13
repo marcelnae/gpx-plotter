@@ -1,5 +1,5 @@
 // Loading GPX files: file picker, dropzone and window-wide drag & drop.
-import { PALETTE } from '../config.js';
+import { PALETTE, MAX_FILE_BYTES } from '../config.js';
 import { state } from '../state.js';
 import { parseGPX } from '../gpx.js';
 import { buildLayer, fitToVisible } from '../map.js';
@@ -8,10 +8,15 @@ import { toast } from './toast.js';
 import { $ } from '../dom.js';
 
 export function addFiles(fileList){
-  const files = Array.from(fileList).filter(f => /\.gpx$/i.test(f.name));
-  if(!files.length){ toast('Those weren’t .gpx files.', true); return; }
+  const gpxFiles = Array.from(fileList).filter(f => /\.gpx$/i.test(f.name));
+  if(!gpxFiles.length){ toast('Those weren’t .gpx files.', true); return; }
 
-  let loaded = 0, failed = 0, pending = files.length;
+  // Oversized files are skipped before reading so they can't exhaust memory
+  const files = gpxFiles.filter(f => f.size <= MAX_FILE_BYTES);
+  const tooLarge = gpxFiles.length - files.length;
+  if(!files.length){ toast('Files over ' + (MAX_FILE_BYTES / 1048576) + ' MB are not supported.', true); return; }
+
+  let loaded = 0, failed = tooLarge, pending = files.length;
   const done = () => {
     renderList();
     if(loaded) fitToVisible();

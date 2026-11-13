@@ -1,6 +1,6 @@
 // Meilenbuch PDF export: visible routes cropped tight and scaled to fit a fixed
 // print size (mm), with a date/distance caption. Uses the global jsPDF (window.jspdf).
-import { TILES, PDF_DPI } from '../config.js';
+import { TILES, PDF_DPI, MAX_EXPORT_PIXELS } from '../config.js';
 import { state, visibleTracks } from '../state.js';
 import { map, combinedBounds } from '../map.js';
 import { fmtDistText, fmtDate } from '../format.js';
@@ -65,6 +65,7 @@ export function exportPDF(){
   const { z, min, srcW, srcH } = pickZoom(padded, outW, outH, TILES[state.basemap].max);
   const k = Math.min(outW / srcW, outH / srcH);   // downscale factor applied at the end
   const lineScale = k > 0 ? 1 / k : 1;
+  if(!(srcW * srcH <= MAX_EXPORT_PIXELS)){ toast('Area too large to export.', true); return; }
 
   return withBusyButton($('exportPdfBtn'), () => {
     const src = document.createElement('canvas');

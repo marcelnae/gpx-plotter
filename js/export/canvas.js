@@ -1,7 +1,7 @@
 // Offscreen canvas rendering shared by PNG and PDF export.
 // Everything is drawn in Leaflet world-pixel coordinates at zoom z, offset by `min`
 // (the world-pixel position of the canvas' top-left corner).
-import { TILES } from '../config.js';
+import { TILES, MAX_EXPORT_TILES } from '../config.js';
 import { state, colorOf } from '../state.js';
 import { map } from '../map.js';
 import { endpoints } from '../gpx.js';
@@ -23,6 +23,8 @@ export function drawTiles(ctx, z, min, W, H, tmpl){
   const maxTile = 2 ** z;
   const x0 = Math.floor(min.x / TILE_SIZE), x1 = Math.floor((min.x + W) / TILE_SIZE);
   const y0 = Math.floor(min.y / TILE_SIZE), y1 = Math.floor((min.y + H) / TILE_SIZE);
+  // Safety net: never fire an unbounded number of tile requests
+  if((x1 - x0 + 1) * (y1 - y0 + 1) > MAX_EXPORT_TILES) return Promise.reject(new Error('too many tiles'));
   const jobs = [];
   for(let tx = x0; tx <= x1; tx++){
     for(let ty = y0; ty <= y1; ty++){
