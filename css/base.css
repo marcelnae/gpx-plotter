@@ -1,0 +1,32 @@
+:root{
+  --ink:#0c1116;          /* deepest panel */
+  --surface:#11171e;      /* panel */
+  --raised:#19222c;       /* raised rows / inputs */
+  --hair:#27323d;         /* hairlines */
+  --hair-soft:#1d2730;
+  --text:#e9eef3;         /* primary */
+  --muted:#8794a1;        /* secondary */
+  --faint:#5d6873;        /* tertiary */
+  --blaze:#ff6a1a;        /* signal orange — actions / brand */
+  --blaze-dim:#c4521a;
+  --good:#18e0c8;
+  --danger:#ff5563;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --r:10px;
+  --shadow: 0 12px 34px -10px rgba(0,0,0,.7), 0 2px 8px -2px rgba(0,0,0,.5);
+}
+*{ box-sizing:border-box; }
+html,body{ height:100%; margin:0; }
+body{
+  font-family:var(--sans);
+  color:var(--text);
+  background:var(--ink);
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+#map{ position:absolute; inset:0; background:#0c1116; z-index:0; }
+
+@media (prefers-reduced-motion:reduce){
+  *{ transition:none!important; animation:none!important; }
+}
